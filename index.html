@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Your photos</title>
+<style>
+body{margin:0;padding:24px;font:18px/1.4 "Segoe UI","Helvetica Neue",Arial,sans-serif;background:#fbe0e8;color:#2f2a35;text-align:center}
+h1{font-size:30px;margin:0 0 6px}h2{font-size:20px;margin:28px 0 8px}p{margin:6px 0}.small{font-size:14px;opacity:.6}
+img,video{max-width:100%;max-height:72vh;background:#fff;display:block;margin:12px auto}
+button{font:inherit;font-weight:600;padding:12px 26px;border:0;border-radius:999px;background:#ee86a8;color:#fff;margin:6px}
+</style></head><body><main id="app"><h1>Your photos</h1><p>Loading...</p></main>
+<script>
+// Links look like  .../booth/#<signed link to a small file listing the photo and videos>   (signed, private storage)
+// The older form   .../booth/#<12 letters/digits>.<time>.<1 or 2>   is still understood for public buckets.
+const BUCKET = "https://foundation-booth.s3.filebase.io";   // only used by the older public form, no slash at the end
+const TTL_HOURS = 24;                                        // only used by the older public form
+const VIDEOS = [["Video collage", "collage.mp4"], ["Full session video", "session.mp4"]];
+const app = document.getElementById('app');
+
+const okHost = u => { try { const x = new URL(u); return x.protocol === 'https:' && (x.hostname === 's3.filebase.io' || x.hostname.endsWith('.s3.filebase.io')); } catch { return false; } };
+function legacy(h) { const m = /^#?([0-9a-f]{12})\.(\d{9,11})\.([12])$/.exec(h); return m ? { sid: m[1], created: +m[2], n: +m[3] } : null; }
+function signedEnd(u) {                                      // when a signed link stops working, in ms
+  const q = new URL(u).searchParams, d = q.get('X-Amz-Date') || '', e = +q.get('X-Amz-Expires');
+  const t = Date.parse(d.replace(/^(\d{4})(\d\d)(\d\d)T(\d\d)(\d\d)(\d\d)Z$/, '$1-$2-$3T$4:$5:$6Z'));
+  return isNaN(t) || !e ? NaN : t + e * 1000;
+}
+const msg = (title, text) => { app.innerHTML = `<h1>${title}</h1><p>${text}</p>`; };
+async function save(url, name) {                             // saves directly when allowed, otherwise opens the file
+  try { const r = await fetch(url); if (!r.ok) throw 0; const a = document.createElement('a');
+    a.href = URL.createObjectURL(await r.blob()); a.download = name; a.click(); }
+  catch { window.open(url, '_blank'); }
+}
+function render(m, end) {
+  app.innerHTML = `<h1>Your photos</h1><img id="ph" alt="Your photo strip"><button id="sp">Save photo</button>
+    <p class="small">Tip: press and hold the picture or a video to save it.</p><div id="vs"></div>
+    <p class="small">Available until ${new Date(end).toLocaleString()}</p>`;
+  const ph = document.getElementById('ph'); let tries = 0;
+  ph.onerror = () => { if (++tries < 20) setTimeout(() => { ph.src = m.photo; }, 3000); };   // same link again: never add to a signed link
+  ph.src = m.photo;
+  document.getElementById('sp').onclick = () => save(m.photo, 'photo-strip.jpg');
+  m.videos.forEach(([label, url]) => {
+    const box = document.createElement('div');
+    box.innerHTML = `<h2>${label}</h2><p class="small">Your video is still being made. This page updates by itself.</p>`;
+    document.getElementById('vs').append(box);
+    const v = document.createElement('video'); v.controls = true; v.playsInline = true; v.preload = 'metadata'; v.hidden = true; let n = 0;
+    v.onloadedmetadata = () => { box.querySelector('p').remove(); v.hidden = false;
+      const b = document.createElement('button'); b.textContent = 'Save video'; b.onclick = () => save(url, label.toLowerCase().replace(/ /g, '-') + '.mp4'); box.append(b); };
+    v.onerror = () => { if (++n < 60) setTimeout(() => { v.src = url; v.load(); }, 8000); };
+    v.src = url; box.insertBefore(v, box.querySelector('p'));
+  });
+}
+async function start() {
+  const raw = location.hash.slice(1), old = legacy(location.hash);
+  if (old) {
+    const end = (old.created + TTL_HOURS * 3600) * 1000;
+    if (Date.now() >= end) return msg('This link has expired', 'Photos are deleted after ' + TTL_HOURS + ' hours.');
+    const base = `${BUCKET}/${old.sid}/`;
+    return render({ photo: base + 'collage.jpg', videos: VIDEOS.slice(0, old.n).map(([l, f]) => [l, base + f]) }, end);
+  }
+  if (!okHost(raw)) return msg('Link not recognised', 'Please scan the QR code again.');
+  const end = signedEnd(raw);
+  if (!isNaN(end) && Date.now() >= end) return msg('This link has expired', 'Photos are deleted after 24 hours.');
+  let m;
+  try { const r = await fetch(raw); if (!r.ok) throw 0; m = await r.json(); }
+  catch { return msg('Could not load your photos', 'Please check your connection and scan the QR code again.'); }
+  if (!okHost(m.photo) || !m.videos.every(v => okHost(v[1]))) return msg('Link not recognised', 'Please scan the QR code again.');
+  render(m, isNaN(end) ? Date.now() + 864e5 : end);
+}
+start();
+</script></body></html>
