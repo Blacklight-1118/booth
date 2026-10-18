@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Your photos</title>
+<style>
+body{margin:0;padding:24px;font:18px/1.4 "Segoe UI","Helvetica Neue",Arial,sans-serif;background:#fbe0e8;color:#2f2a35;text-align:center}
+h1{font-size:30px;margin:0 0 6px}h2{font-size:20px;margin:28px 0 8px}p{margin:6px 0}.small{font-size:14px;opacity:.6}
+img,video{max-width:100%;max-height:72vh;background:#fff;display:block;margin:12px auto}
+button{font:inherit;font-weight:600;padding:12px 26px;border:0;border-radius:999px;background:#ee86a8;color:#fff;margin:6px}
+</style></head><body><main id="app"><h1>Your photos</h1><p>Loading...</p></main>
+<script>
+const BUCKET = "https://foundation-booth.s3.filebase.io";   // your public bucket address, no slash at the end
+const TTL_HOURS = 24;                                        // keep equal to the booth's TTL_HOURS
+const VIDEOS = [["collage.mp4", "Video collage"], ["session.mp4", "Full session video"]];
+
+function parse(h) { const m = /^#?([0-9a-f]{12})\.(\d{9,11})\.([12])$/.exec(h); return m ? { sid: m[1], created: +m[2], n: +m[3] } : null; }
+function expired(created, nowMs) { return nowMs >= (created + TTL_HOURS * 3600) * 1000; }
+
+async function save(url, name) {                              // works when the bucket allows it, otherwise opens the file
+  try { const r = await fetch(url); if (!r.ok) throw 0; const a = document.createElement('a');
+    a.href = URL.createObjectURL(await r.blob()); a.download = name; a.click(); }
+  catch { window.open(url, '_blank'); }
+}
+function show(p) {
+  const app = document.getElementById('app'), until = new Date((p.created + TTL_HOURS * 3600) * 1000).toLocaleString();
+  const base = `${BUCKET}/${p.sid}/`;
+  app.innerHTML = `<h1>Your photos</h1><img id="ph" alt="Your photo strip"><button id="sp">Save photo</button>
+    <p class="small">Tip: press and hold the picture or a video to save it.</p><div id="vs"></div><p class="small">Available until ${until}</p>`;
+  const ph = document.getElementById('ph'); let tries = 0;
+  ph.onerror = () => { if (++tries < 20) setTimeout(() => { ph.src = base + 'collage.jpg?t=' + Date.now(); }, 3000); };
+  ph.src = base + 'collage.jpg';
+  document.getElementById('sp').onclick = () => save(base + 'collage.jpg', 'photo-strip.jpg');
+  VIDEOS.slice(0, p.n).forEach(([f, label]) => {
+    const box = document.createElement('div');
+    box.innerHTML = `<h2>${label}</h2><p class="small">Your video is still being made. This page updates by itself.</p>`;
+    document.getElementById('vs').append(box);
+    const v = document.createElement('video'); v.controls = true; v.playsInline = true; v.preload = 'metadata'; v.hidden = true; let n = 0;
+    v.onloadedmetadata = () => { box.querySelector('p').remove(); v.hidden = false;
+      const b = document.createElement('button'); b.textContent = 'Save video'; b.onclick = () => save(base + f, f); box.append(b); };
+    v.onerror = () => { if (++n < 60) setTimeout(() => { v.src = base + f + '?t=' + Date.now(); }, 8000); };
+    v.src = base + f; box.insertBefore(v, box.querySelector('p'));
+  });
+}
+const p = parse(location.hash), app = document.getElementById('app');
+if (!p) app.innerHTML = '<h1>Link not recognised</h1><p>Please scan the QR code again.</p>';
+else if (expired(p.created, Date.now())) app.innerHTML = '<h1>This link has expired</h1><p>Photos are deleted after ' + TTL_HOURS + ' hours.</p>';
+else show(p);
+</script></body></html>
